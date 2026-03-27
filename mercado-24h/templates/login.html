@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login - Mercadinho 24h</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="header">
+        <div>
+          <h1>Mercadinho 24h 🛒</h1>
+          <p class="subtitle">Entre para acessar os produtos e o carrinho</p>
+        </div>
+      </header>
+
+      <p id="status" class="status" aria-live="polite">Faça login para continuar.</p>
+
+      <section class="panel" style="max-width: 380px; margin: 0 auto; padding-top: 22px; padding-bottom: 22px;">
+        <div style="display: grid; gap: 10px; width: 100%; max-width: 300px; margin: 0 auto;">
+          <div class="panel-title" style="margin-bottom: 2px;">Login</div>
+          <input id="email" type="email" placeholder="email@mercado.com" value="user@mercado.com" style="padding: 9px 10px; font-size: 12px;" />
+          <input id="senha" type="password" placeholder="Senha" value="1234" style="padding: 9px 10px; font-size: 12px;" />
+          <button id="btn-login" type="button" style="padding: 12px 14px; background: var(--navy-900); color: #fff;">
+            Entrar
+          </button>
+        </div>
+        <div class="muted small" style="margin-top: 10px;">
+          Dica: depois do login você vai para a tela de produtos.
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const statusEl = document.getElementById("status");
+      const emailEl = document.getElementById("email");
+      const senhaEl = document.getElementById("senha");
+
+      function setStatus(text, kind) {
+        statusEl.textContent = text;
+        statusEl.className = "status" + (kind === "ok" ? " ok" : kind === "err" ? " err" : "");
+      }
+
+      async function api(path, method = "GET", body = null) {
+        const res = await fetch(path, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: body != null ? JSON.stringify(body) : undefined,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const err = new Error(data.error || data.message || "Erro");
+          err.data = data;
+          throw err;
+        }
+        return data;
+      }
+
+      document.getElementById("btn-login").addEventListener("click", async () => {
+        setStatus("Entrando...", null);
+        try {
+          await api("/login", "POST", { email: emailEl.value.trim(), senha: senhaEl.value });
+          setStatus("Login ok. Redirecionando...", "ok");
+          window.location.href = "/entrada";
+        } catch (e) {
+          setStatus((e.data && (e.data.error || e.data.message)) || e.message, "err");
+        }
+      });
+    </script>
+  </body>
+</html>
+

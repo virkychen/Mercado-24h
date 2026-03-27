@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Produtos - Mercadinho 24h</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="header">
+        <div>
+          <h1>Mercadinho 24h 🛒</h1>
+          <p class="subtitle">Produtos + carrinho + pagamento (fila + resiliência)</p>
+        </div>
+        <div class="topbar">
+          <div class="mini-form">
+            <input type="text" value="{{ user_name or '' }}" disabled style="width: 220px;" />
+            <button id="btn-sair" type="button">Sair</button>
+          </div>
+        </div>
+      </header>
+
+      <p id="status" class="status" aria-live="polite">Aguardando entrada...</p>
+
+      <div class="layout">
+        <section class="panel">
+          <div class="panel-title">Produtos</div>
+          <div id="product-grid" class="product-grid"></div>
+        </section>
+
+        <aside class="panel cart-panel">
+          <div class="panel-title">Carrinho</div>
+
+          <div id="cart-items" class="muted small" style="display: grid; gap: 8px; margin-bottom: 12px;">
+            Carrinho vazio.
+          </div>
+          <div class="cart-meta">
+            <div class="meta-line muted">
+              <span>Itens:</span>
+              <span id="cart-count">0</span>
+            </div>
+            <div class="meta-line">
+              <span>Valor total:</span>
+              <strong id="cart-total">R$ 0,00</strong>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="payment-mode">Modo pagamento</label>
+            <select id="payment-mode">
+              <option value="normal" selected>Normal</option>
+              <option value="retry">Retry</option>
+              <option value="fallback">Fallback</option>
+              <option value="timeout">Timeout</option>
+            </select>
+          </div>
+
+          <button id="btn-finalizar" class="primary" type="button" disabled>
+            Finalizar Compra
+          </button>
+
+          <button id="btn-consultar" class="secondary" type="button" disabled>
+            Consultar saida
+          </button>
+
+          <div class="divider"></div>
+          <div class="muted small" id="saida-status">Saida: --</div>
+        </aside>
+      </div>
+    </main>
+
+    <script>
+      const products = [
+        { productId: "agua", nome: "Agua Mineral 500ml", preco: 2.50 },
+        { productId: "refrigerante", nome: "Refrigerante 350ml", preco: 4.00 },
+        { productId: "sanduiche", nome: "Sanduiche Natural", preco: 12.00 },
+        { productId: "chocolate", nome: "Chocolate", preco: 5.50 },
+        { productId: "salgadinho", nome: "Salgadinho", preco: 6.00 },
+      ];
+
+      const statusEl = document.getElementById("status");
+      const productGrid = document.getElementById("product-grid");
+      const cartTotalEl = document.getElementById("cart-total");
+      const cartCountEl = document.getElementById("cart-count");
+      const cartItemsEl = document.getElementById("cart-items");
+      const paymentModeEl = document.getElementById("payment-mode");
+      const btnFinalizar = document.getElementById("btn-finalizar");
+      const btnConsultar = document.getElementById("btn-consultar");
+      const saidaStatusEl = document.getElementById("saida-status");
+
+      let entradaLiberada = {{ "true" if entrada_liberada else "false" }};
+      let cartItems = [];
+      let lastOrderId = "";
+      let lastTotal = 0;
+
+      const fmtBRL = (v) => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+      function setStatus(text, kind) {
+        statusEl.textContent = text;
+        statusEl.className = "status" + (kind === "ok" ? " ok" : kind === "err" ? " err" : "");
+      }
+
+      function getCartCount() {
+        return cartItems.reduce((acc, item) => acc + item.quantidade, 0);
+      }
+
+      function getCartTotal() {
+        return cartItems.reduce((acc, item) => acc + (item.preco * item.quantidade), 0);
+      }
+
+      function refreshCartMeta() {
+        const cartCount = getCartCount();
+        const cartTotal = getCartTotal();
+        cartTotalEl.textContent = fmtBRL(cartTotal);
+        cartCountEl.textContent = cartCount.toString();
+        btnFinalizar.disabled = !entradaLiberada || cartCount === 0;
+      }
+
+      function renderCartItems() {
+        if (cartItems.length === 0) {
+          cartItemsEl.innerHTML = "Carrinho vazio.";
+          return;
+        }
+
+        cartItemsEl.innerHTML = "";
+        for (const item of cartItems) {
+          const row = document.createElement("div");
+          row.style.display = "flex";
+          row.style.alignItems = "center";
+          row.style.justifyContent = "space-between";
+          row.style.gap = "8px";
+          row.innerHTML = `
+            <span>${item.nome} (x${item.quantidade})</span>
+            <button type="button" data-product-id="${item.productId}" class="remove-circle" aria-label="Remover uma unidade" title="Remover uma unidade">-</button>
+          `;
+
+          row.querySelector(".remove-circle").addEventListener("click", async () => {
+            await removerDoCarrinho(item.productId);
+          });
+          cartItemsEl.appendChild(row);
+        }
+      }
+
+      function upsertLocalItem(p, quantidade) {
+        const existente = cartItems.find((item) => item.productId === p.productId);
+        if (existente) {
+          existente.quantidade += quantidade;
+          return;
+        }
+        cartItems.push({
+          productId: p.productId,
+          nome: p.nome,
+          preco: p.preco,
+          quantidade,
+        });
+      }
+
+      async function api(path, method = "GET", body = null) {
+        const res = await fetch(path, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: body != null ? JSON.stringify(body) : undefined,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const err = new Error(data.error || data.message || "Erro");
+          err.data = data;
+          throw err;
+        }
+        return data;
+      }
+
+      function renderProducts() {
+        productGrid.innerHTML = "";
+        for (const p of products) {
+          const card = document.createElement("div");
+          card.className = "product-card";
+          card.innerHTML = `
+            <div class="product-name">${p.nome}</div>
+            <div class="product-price">${fmtBRL(p.preco)}</div>
+            <button class="add" type="button">Adicionar</button>
+          `;
+          card.querySelector(".add").addEventListener("click", async () => {
+            if (!entradaLiberada) {
+              setStatus("Entrada nao liberada para adicionar produtos.", "err");
+              return;
+            }
+            await adicionarAoCarrinho(p, 1);
+          });
+          productGrid.appendChild(card);
+        }
+      }
+
+      async function adicionarAoCarrinho(p, quantidade) {
+        setStatus("Adicionando item...", null);
+        try {
+          await api("/carrinho/adicionar", "POST", {
+            productId: p.productId,
+            nome: p.nome,
+            preco: p.preco,
+            quantidade,
+          });
+
+          upsertLocalItem(p, quantidade);
+          renderCartItems();
+          refreshCartMeta();
+          btnConsultar.disabled = true;
+          saidaStatusEl.textContent = "Saida: --";
+          setStatus("Item adicionado.", "ok");
+        } catch (e) {
+          setStatus((e.data && (e.data.error || e.data.message)) || e.message, "err");
+        }
+      }
+
+      async function removerDoCarrinho(productId) {
+        setStatus("Removendo item...", null);
+        try {
+          await api("/carrinho/remover", "POST", { productId, quantidade: 1 });
+          const item = cartItems.find((i) => i.productId === productId);
+          if (item) {
+            item.quantidade -= 1;
+            if (item.quantidade <= 0) {
+              cartItems = cartItems.filter((i) => i.productId !== productId);
+            }
+          }
+          renderCartItems();
+          refreshCartMeta();
+          setStatus("Item removido.", "ok");
+        } catch (e) {
+          setStatus((e.data && (e.data.error || e.data.message)) || e.message, "err");
+        }
+      }
+
+      async function aplicarCenario() {
+        const mode = paymentModeEl.value;
+        if (mode === "normal") {
+          await api("/config/simulation-mode", "POST", { mode: "normal", delay: 0 });
+          await api("/config/payment-rate", "POST", { rate: 0.7 });
+          return;
+        }
+        const mapa = { retry: "retry", fallback: "fallback", timeout: "timeout" };
+        await api("/teste/cenario", "POST", { cenario: mapa[mode] });
+      }
+
+      async function esperarSaida(orderId) {
+        for (let i = 0; i < 10; i++) {
+          const r = await api("/saida/status/" + encodeURIComponent(orderId), "GET");
+          if (r.saidaLiberada) return true;
+          await new Promise((res) => setTimeout(res, 300));
+        }
+        return false;
+      }
+
+      btnConsultar.addEventListener("click", async () => {
+        if (!lastOrderId) return;
+        setStatus("Consultando saida...", null);
+        try {
+          const r = await api("/saida/status/" + encodeURIComponent(lastOrderId), "GET");
+          saidaStatusEl.textContent = "Saida: " + (r.saidaLiberada ? "LIBERADA" : "NAO LIBERADA");
+          setStatus(r.saidaLiberada ? "Saida liberada." : "Saida ainda nao liberada.", r.saidaLiberada ? "ok" : "err");
+        } catch (e) {
+          setStatus((e.data && (e.data.error || e.data.message)) || e.message, "err");
+        }
+      });
+
+      btnFinalizar.addEventListener("click", async () => {
+        if (getCartCount() === 0) {
+          setStatus("Carrinho vazio.", "err");
+          return;
+        }
+        setStatus("Confirmando pedido e processando pagamento...", null);
+        try {
+          await aplicarCenario();
+          const pedido = await api("/pedido/confirmar", "POST");
+          lastOrderId = pedido.orderId;
+          lastTotal = pedido.total;
+
+          try {
+            await api("/pagamento/realizar", "POST", { orderId: lastOrderId, total: lastTotal });
+            cartItems = [];
+            renderCartItems();
+            refreshCartMeta();
+            setStatus("Pagamento ok. Aguardando liberacao da saida...", "ok");
+
+            const liberada = await esperarSaida(lastOrderId);
+            saidaStatusEl.textContent = "Saida: " + (liberada ? "LIBERADA" : "NAO LIBERADA (verifique)");
+            btnConsultar.disabled = !liberada;
+          } catch (e) {
+            const d = e.data || {};
+            const fallback = d.fallback ? (" (" + d.fallback + ")") : "";
+            setStatus(d.error || d.etapa || ("Falha no pagamento" + fallback), "err");
+            saidaStatusEl.textContent = "Saida: -- (pagamento falhou)";
+            btnConsultar.disabled = false;
+          }
+        } catch (e) {
+          const d = e.data || {};
+          setStatus(d.message || d.error || d.etapa || e.message, "err");
+        }
+      });
+
+      document.getElementById("btn-sair").addEventListener("click", async () => {
+        try {
+          await api("/logout", "POST");
+        } finally {
+          window.location.href = "/login";
+        }
+      });
+
+      renderProducts();
+      renderCartItems();
+      refreshCartMeta();
+      if (entradaLiberada) {
+        setStatus("Entrada já liberada. Selecione produtos.", "ok");
+      }
+    </script>
+  </body>
+</html>
+

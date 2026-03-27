@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Entrada (QR) - Mercadinho 24h</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="header">
+        <div>
+          <h1>Mercadinho 24h 🛒</h1>
+          <p class="subtitle">Escaneie o QR para liberar a entrada</p>
+        </div>
+        <div class="topbar">
+          <div class="mini-form">
+            <input type="text" value="{{ user_name or '' }}" disabled style="width: 220px;" />
+            <button id="btn-sair" type="button">Sair</button>
+          </div>
+        </div>
+      </header>
+
+      <p id="status" class="status" aria-live="polite">Aguardando liberar entrada...</p>
+
+      <section class="panel" style="max-width: 420px; margin: 0 auto;">
+        <div style="display: grid; gap: 14px; width: 100%; max-width: 320px; margin: 0 auto; justify-items: center;">
+          <div class="panel-title" style="width: 100%; margin-bottom: 2px;">QR Code (simulado)</div>
+
+          <div
+            style="
+              width: 240px;
+              height: 240px;
+              border-radius: 16px;
+              border: 1px solid var(--border);
+              background: #fff;
+              display: grid;
+              place-items: center;
+              overflow: hidden;
+            "
+            aria-label="QR code simulado (não funciona)"
+            title="QR simulado (não funciona)"
+          >
+            <!-- QR fake (não funciona) -->
+            <svg width="220" height="220" viewBox="0 0 220 220" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="QR fake">
+              <rect x="0" y="0" width="220" height="220" fill="#fff"/>
+              <rect x="10" y="10" width="60" height="60" fill="#0f1a33"/>
+              <rect x="16" y="16" width="48" height="48" fill="#fff"/>
+              <rect x="24" y="24" width="32" height="32" fill="#0f1a33"/>
+
+              <rect x="150" y="10" width="60" height="60" fill="#0f1a33"/>
+              <rect x="156" y="16" width="48" height="48" fill="#fff"/>
+              <rect x="164" y="24" width="32" height="32" fill="#0f1a33"/>
+
+              <rect x="10" y="150" width="60" height="60" fill="#0f1a33"/>
+              <rect x="16" y="156" width="48" height="48" fill="#fff"/>
+              <rect x="24" y="164" width="32" height="32" fill="#0f1a33"/>
+
+              <!-- blocos aleatórios -->
+              <g fill="#0f1a33">
+                <rect x="92" y="22" width="12" height="12"/>
+                <rect x="110" y="22" width="12" height="12"/>
+                <rect x="92" y="40" width="12" height="12"/>
+                <rect x="128" y="40" width="12" height="12"/>
+                <rect x="92" y="58" width="12" height="12"/>
+                <rect x="110" y="58" width="12" height="12"/>
+
+                <rect x="92" y="92" width="12" height="12"/>
+                <rect x="110" y="92" width="12" height="12"/>
+                <rect x="128" y="92" width="12" height="12"/>
+                <rect x="146" y="92" width="12" height="12"/>
+
+                <rect x="92" y="110" width="12" height="12"/>
+                <rect x="128" y="110" width="12" height="12"/>
+                <rect x="146" y="110" width="12" height="12"/>
+
+                <rect x="92" y="128" width="12" height="12"/>
+                <rect x="110" y="128" width="12" height="12"/>
+                <rect x="146" y="128" width="12" height="12"/>
+
+                <rect x="92" y="162" width="12" height="12"/>
+                <rect x="110" y="162" width="12" height="12"/>
+                <rect x="128" y="162" width="12" height="12"/>
+                <rect x="146" y="162" width="12" height="12"/>
+              </g>
+
+              <!-- aviso de "não funciona" -->
+              <g opacity="0.95">
+                <rect x="22" y="92" width="176" height="36" rx="10" fill="rgba(255,255,255,0.92)"/>
+                <text x="110" y="115" text-anchor="middle" font-family="system-ui,Segoe UI,Roboto,Arial" font-size="14" font-weight="800" fill="#991b1b">
+                  NÃO FUNCIONA
+                </text>
+              </g>
+            </svg>
+          </div>
+
+          <button id="btn-liberar" class="primary" type="button" style="max-width: 320px;">
+            Liberar entrada
+          </button>
+
+          <div class="muted small" style="text-align: center;">
+            Este QR é só ilustrativo. Clique em <b>Liberar entrada</b> para continuar.
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const statusEl = document.getElementById("status");
+
+      function setStatus(text, kind) {
+        statusEl.textContent = text;
+        statusEl.className = "status" + (kind === "ok" ? " ok" : kind === "err" ? " err" : "");
+      }
+
+      async function api(path, method = "GET", body = null) {
+        const res = await fetch(path, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: body != null ? JSON.stringify(body) : undefined,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const err = new Error(data.error || data.message || "Erro");
+          err.data = data;
+          throw err;
+        }
+        return data;
+      }
+
+      document.getElementById("btn-liberar").addEventListener("click", async () => {
+        setStatus("Liberando entrada...", null);
+        try {
+          await api("/entrada/liberar", "POST", { qrCode: "QR-FAKE-NAO-FUNCIONA" });
+          setStatus("Entrada liberada. Indo para produtos...", "ok");
+          window.location.href = "/produtos";
+        } catch (e) {
+          setStatus((e.data && (e.data.error || e.data.message)) || e.message, "err");
+        }
+      });
+
+      document.getElementById("btn-sair").addEventListener("click", async () => {
+        try {
+          await api("/logout", "POST");
+        } finally {
+          window.location.href = "/login";
+        }
+      });
+    </script>
+  </body>
+</html>
+
